@@ -1,0 +1,134 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  TwilioAuthTokenSecretArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Description: The ARN of the AWS Secrets Manager secret containing the Twilio Auth Token.
+
+Resources:
+  MessagesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: MessagesTable
+      AttributeDefinitions:
+        - AttributeName: messageId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: messageId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  FaqUpdatesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: FaqUpdatesTable
+      AttributeDefinitions:
+        - AttributeName: phrase
+          AttributeType: S
+      KeySchema:
+        - AttributeName: phrase
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  IngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers/ingest.lambda_handler
+      Runtime: python3.9
+      Environment:
+        Variables:
+          MESSAGES_TABLE: !Ref MessagesTable
+          TWILIO_AUTH_TOKEN_SECRET_ARN: !Ref TwilioAuthTokenSecretArn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /messages
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MessagesTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref TwilioAuthTokenSecretArn
+
+  AnalyticsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers/analytics.lambda_handler
+      Runtime: python3.9
+      Events:
+        ScheduleEvent:
+          Type: Schedule
+          Properties:
+            Schedule: rate(24 hours)
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref MessagesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FaqUpdatesTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - comprehend:BatchDetectKeyPhrases
+              Resource: '*'
+
+  GetFaqsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers/get_faqs.lambda_handler
+      Runtime: python3.9
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /faq-updates
+            Method: get
+            Auth:
+              ApiKeyRequired: true
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref FaqUpdatesTable
+
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      AccessLogSetting:
+        DestinationArn: !GetAtt ApiLogGroup.Arn
+        Format: $context.identity.sourceIp $context.identity.caller $context.identity.user [$context.requestTime] "$context.httpMethod $context.resourcePath $context.protocol" $context.status $context.responseLength $context.requestId
+      MethodSettings:
+        - HttpMethod: "*"
+          ResourcePath: "/*"
+          MetricsEnabled: true
+      Auth:
+        ApiKeyRequired: false
+      UsagePlan:
+        CreateUsagePlan: PER_API
+        UsagePlanName: FaqUpdaterUsagePlan
+        ApiStages:
+          - ApiId: !Ref Api
+            Stage: Prod
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL for Prod stage for the FAQ Updater
+    Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/Prod/
+  ApiKeyId:
+    Description: ID of the API Key created for the /faq-updates endpoint. Retrieve the key value from the AWS Console or CLI.
+    Value: !Ref ApiApiKey

@@ -106,10 +106,13 @@ Resources:
       StageName: Prod
       AccessLogSetting:
         DestinationArn: !GetAtt ApiLogGroup.Arn
-        Format: $context.identity.sourceIp $context.identity.caller $context.identity.user [$context.requestTime] "$context.httpMethod $context.resourcePath $context.protocol" $context.status $context.responseLength $context.requestId
+        Format: $context.identity.sourceIp $context.identity.caller
+          $context.identity.user [$context.requestTime] "$context.httpMethod
+          $context.resourcePath $context.protocol" $context.status
+          $context.responseLength $context.requestId
       MethodSettings:
-        - HttpMethod: "*"
-          ResourcePath: "/*"
+        - HttpMethod: '*'
+          ResourcePath: /*
           MetricsEnabled: true
       Auth:
         ApiKeyRequired: false
@@ -130,5 +133,6 @@ Outputs:
     Description: API Gateway endpoint URL for Prod stage for the FAQ Updater
     Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/Prod/
   ApiKeyId:
-    Description: ID of the API Key created for the /faq-updates endpoint. Retrieve the key value from the AWS Console or CLI.
+    Description: ID of the API Key created for the /faq-updates endpoint. Retrieve
+      the key value from the AWS Console or CLI.
     Value: !Ref ApiApiKey
